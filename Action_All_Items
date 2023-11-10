@@ -1,0 +1,115 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+from datetime import datetime
+import re
+import time
+
+
+base_url_cat = "https://www.action.com"
+
+headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                         "Chrome/119.0.0.0 Safari/537.36"}
+
+r = requests.get("https://www.action.com/fr-fr/", headers=headers)
+soup = BeautifulSoup(r.content, "html.parser")
+
+# find all the product categories
+
+category_list = soup.find("div", class_="container pb-6 pt-4")
+categories = []
+for item_cat in category_list:
+    for link in item_cat.find_all('a', href=True):
+        categories.append(base_url_cat + link["href"])
+
+all_products_data = []
+
+# find all the product pages links on all pages
+
+for category_link in categories:
+
+    # Extract category name from category link
+    category_name = re.search(r'https://www.action.com/fr-fr/c/(.*)/', category_link).group(1)
+
+    print(category_name)
+    
+    product_links = []
+    next_page_url = category_link  # Initialize with the first page of each category
+
+    while next_page_url:
+        r = requests.get(next_page_url, headers=headers)
+        soup_pdt = BeautifulSoup(r.content, "html.parser")
+
+        product_list = soup_pdt.find_all("div", class_="pt-5")
+        for item_pdt in product_list:
+            for link_pdt in item_pdt.find_all("a", href=True):
+                product_links.append(base_url_cat + link_pdt['href'])
+
+        next_page_button = soup_pdt.find('a', {'aria-label': 'Suivant'})
+        next_page_url = base_url_cat + next_page_button['href'] if next_page_button else None
+
+    for product_link in product_links:
+        r_product = requests.get(product_link, headers=headers)
+        soup_product = BeautifulSoup(r_product.content, "html.parser")
+
+        product_name = soup_product.find("h1", class_="font-bold")
+        price_first = soup_product.find('span', class_='text-price-whole-xl')
+        price_second = soup_product.find('span', class_='text-price-fraction-lg')
+        price_per_kg = soup_product.find("div", class_="text-xxs").text.strip().replace("\xa0", " ")
+        product_desc = soup_product.find('p', class_='mt-1')
+
+        # Retrieve the product number
+        product_number_cell = soup_product.find('div', class_='table-cell', string="Numéro de l'article")
+        if product_number_cell:
+            product_number = product_number_cell.find_next_sibling('div', class_='table-cell')
+            product_number = product_number.text.strip() if product_number else None
+        else:
+            product_number = None
+
+        # Retrieve the product image URL
+        div_with_img = soup_product.find('div', class_='text-center nextImageHack iosMobileHack')
+        if div_with_img:
+            img_tags = div_with_img.find_all('img', alt=True)
+            if len(img_tags) > 1:
+                img_tag = img_tags[1]
+                img_url = img_tag.get('srcset', None)
+                if img_url:
+                    img_url = base_url_cat + img_url.split()[0]
+                else:
+                    img_url = base_url_cat + img_tag.get('src', None)
+            else:
+                img_url = None
+        else:
+            img_url = None
+
+        # Retrieve the product page URL
+        product_page_url = product_link
+
+        date_scraped = datetime.now().strftime("%Y-%m-%d")
+
+        product_data = {
+            'Category': category_name,
+            'Product Name': product_name.text.strip() if product_name else None,
+            'Price': f"{price_first.text.strip()},{price_second.text.strip()} €" if price_first and price_second else None,
+            'Price per kg': price_per_kg,
+            'Product Description': product_desc.text.strip() if product_desc else None,
+            'Product Number': product_number,
+            'Image URL': img_url,
+            'Product Page URL': product_page_url,
+            'Date Scraped': date_scraped
+        }
+
+        all_products_data.append(product_data)
+
+        time.sleep(0.5)  # 0.5second delay, adjust as needed
+        print(f'getting {product_name.text.strip() if product_name else None}')
+
+# Generate a timestamp for the current date and time
+timestamp = datetime.now().strftime("%Y-%m-%d")
+
+df = pd.DataFrame(all_products_data)
+
+print(df.head())
+
+df.to_csv(f'Action_all_items_{timestamp}.csv', index=False)
+
