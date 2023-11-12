@@ -25,9 +25,7 @@ for item_cat in category_list:
 all_products_data = []
 
 # find all the product pages links on all pages
-
 for category_link in categories:
-
     # Extract category name from category link
     category_name = re.search(r'https://www.action.com/fr-fr/c/(.*)/', category_link).group(1)
 
@@ -47,6 +45,13 @@ for category_link in categories:
 
         next_page_button = soup_pdt.find('a', {'aria-label': 'Suivant'})
         next_page_url = base_url_cat + next_page_button['href'] if next_page_button else None
+
+        #failsafe for bricolage currently bugged
+        if category_name == "bricolage" and next_page_url:
+            current_page_number = int(re.search(r'page=(\d+)', next_page_url).group(1))
+            last_page_number = 25  # Change this to the actual last page number for "bricolage"
+            if current_page_number > last_page_number:
+                next_page_url = None  # Stop the loop if the current page exceeds the last page number
 
     for product_link in product_links:
         r_product = requests.get(product_link, headers=headers)
