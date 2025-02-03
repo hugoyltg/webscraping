@@ -1,0 +1,158 @@
+import time
+import random
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+import csv
+from datetime import datetime
+
+# Set up the Selenium WebDriver
+options = Options()
+options.add_argument('--headless')  # Run headless
+options.add_argument('--no-sandbox')
+options.add_argument('--disable-dev-shm-usage')
+options.add_argument('--disable-gpu')
+options.add_argument('--log-level=3')  # Only show fatal errors
+options.add_experimental_option('excludeSwitches', ['enable-logging'])  # Suppress console logging
+options.add_argument('--disable-blink-features=AutomationControlled')
+options.add_argument('--disable-notifications')
+options.add_argument('--start-maximized')
+options.add_experimental_option("excludeSwitches", ["enable-automation"])
+options.add_experimental_option('useAutomationExtension', False)
+
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+def get_page_content():
+    """Get the content of the current page."""
+    time.sleep(random.uniform(3, 6))  # Sleep to simulate human delay
+
+    # Wait for the page content to load
+    WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.CLASS_NAME, 'Article-mosaicItem'))
+    )
+
+    page_source = driver.page_source
+    if 'Article-mosaicItem' in page_source:
+        return page_source
+    return None
+
+def extract_product_details(content):
+    """Extract product details from the page content."""
+    soup = BeautifulSoup(content, 'html.parser')
+    print("Parsing page content...")
+
+    products = soup.find_all('div', class_='Article-mosaicItem')
+    print(f"Found {len(products)} products")
+
+    product_details = []
+
+    for product in products:
+        try:
+            # Extract URL and title
+            url_tag = product.find('a', class_='thumbnail-titleLink')
+            url = 'https://www.fnac.com' + url_tag['href'] if url_tag and 'href' in url_tag.attrs else ''
+            title = url_tag.text.strip() if url_tag else ''
+            
+            # Extract price
+            price_tag = product.find('span', class_='thumbnail-price')
+            price = price_tag.text.strip() if price_tag else ''
+            
+            # Extract image URL
+            img_tag = product.find('img', class_='thumbnail-imgContent')
+            img_url = img_tag['src'] if img_tag and 'src' in img_tag.attrs else ''
+            
+            # Extract brand info (if available)
+            brand_tag = product.find('div', class_='thumbnail-sub')
+            brand_name = 'No Brand'  # Default if no brand is found
+            brand_url = 'No Brand URL'  # Default if no brand URL is found
+            
+            if brand_tag:
+                spans = brand_tag.find_all('span')
+                if len(spans) > 1:
+                    brand_name = spans[1].text.strip()
+                a_tag = brand_tag.find_all('a')
+                if a_tag:
+                    brand_url = a_tag[0]['href']
+
+            current_date = datetime.now().strftime("%d/%m/%Y")
+            
+            if title and price:
+                product_details.append([current_date, title, price, url, img_url, brand_name, brand_url])
+                print(f"Found product: {title[:30]}... - {price}")
+            
+        except Exception as e:
+            print(f"Error processing product: {str(e)}")
+    
+    return product_details
+
+def close_cookie_popup():
+    """Close the cookie consent popup if it appears."""
+    try:
+        cookie_button = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.ID, "onetrust-accept-btn-handler"))  # Adjust selector if needed
+        )
+        cookie_button.click()
+        print("Closed cookie popup")
+        time.sleep(2)  # Short delay after closing
+    except Exception as e:
+        print("No cookie popup found or already closed.")
+
+def scrape_products_for_page(page_index):
+    """Scrape product details on the current page."""
+    url = f"https://www.fnac.com/Tous-les-Videoprojecteurs/Videoprojecteur/nsh474921/w-4?PageIndex={page_index}&SDM=mosaic&SFilt=1!13"
+    driver.get(url)
+    print(f"Scraping page {page_index}...")
+    
+    page_content = get_page_content()
+    if page_content:
+        page_products = extract_product_details(page_content)
+        return page_products
+    return []
+
+try:
+    # Base URL for page 1
+    all_product_details = []
+    page_index = 1
+    last_scraped_page = 0
+
+    # Start scraping from page 1
+    while True:
+        # Scrape products from the current page
+        new_products = scrape_products_for_page(page_index)
+
+        if new_products:
+            all_product_details.extend(new_products)
+            print(f"Total products found so far: {len(all_product_details)}")
+            last_scraped_page = page_index  # Update last successfully scraped page
+        else:
+            print(f"No products found on page {page_index}")
+            break  # If no products found, assume we're at the last page
+
+        page_index += 1  # Move to the next page
+
+    # Write results to CSV
+    with open('product_details.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(['Date', 'Title', 'Price', 'URL', 'Image URL', 'Brand', 'Brand URL'])
+        csvwriter.writerows(all_product_details)
+
+    print(f"\nScraping completed. Found {len(all_product_details)} products.")
+    print("Output saved in 'product_details.csv'.")
+
+except Exception as e:
+    print(f"An error occurred: {str(e)}")
+    # Save collected data before failure
+    if all_product_details:
+        with open('product_details.csv', 'w', newline='', encoding='utf-8-sig') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(['Date', 'Title', 'Price', 'URL', 'Image URL', 'Brand', 'Brand URL'])
+            csvwriter.writerows(all_product_details)
+        print(f"Saved {len(all_product_details)} products before error occurred.")
+
+finally:
+    driver.quit()
